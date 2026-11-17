@@ -1,3 +1,21 @@
-.venv/
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Environnement virtuel
+.venv/
+venv/
+
+# Clés secrètes générées par scripts/init_keys.py : ne jamais les committer
+keys.json
+
+# Fichiers d'outils locaux
+.claude/
+CLAUDE.md
+
+# Éditeurs / OS
+.vscode/
+.idea/
+.DS_Store
