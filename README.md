@@ -54,11 +54,11 @@ Choix techniques : Python 3.10+, bibliothèque `cryptography` avec **AES-GCM** (
 
 | Partie | Dossier | Responsabilité | Nom | Branche |
 | --- | --- | --- | --- | --- |
-| 1 | [`client/`](client/README.md) | Dérive K_client du mot de passe, enchaîne les 3 échanges, vérifie `ts + 1`, affiche chaque étape pour la démo | | `feat/client` |
-| 2 | [`as_server/`](as_server/README.md) | Reçoit AS_REQ, cherche K_client, génère K_c_tgs, renvoie enc_part + TGT | | `feat/as-server` |
-| 3 | [`tgs_server/`](tgs_server/README.md) | Ouvre le TGT, vérifie l'authenticator, replay cache, génère K_c_service, renvoie le ticket | | `feat/tgs-server` |
-| 4 | [`service/`](service/README.md) | Ouvre le ticket, vérifie l'authenticator, replay cache, renvoie `ts + 1`, donne l'accès | | `feat/service` |
-| 5 | [`common/`](common/README.md) | Code commun (déjà écrit) : le relire, le comprendre, maintenir les tests, gérer `init_keys.py`, coordonner l'intégration | | `feat/common` |
+| 1 | [`client/`](client/README.md) | Dérive K_client du mot de passe, enchaîne les 3 échanges, vérifie `ts + 1`, affiche chaque étape pour la démo | Denis | `feat/client` |
+| 2 | [`as_server/`](as_server/README.md) | Reçoit AS_REQ, cherche K_client, génère K_c_tgs, renvoie enc_part + TGT | Sasha | `feat/as-server` |
+| 3 | [`tgs_server/`](tgs_server/README.md) | Ouvre le TGT, vérifie l'authenticator, replay cache, génère K_c_service, renvoie le ticket | Hector | `feat/tgs-server` |
+| 4 | [`service/`](service/README.md) | Ouvre le ticket, vérifie l'authenticator, replay cache, renvoie `ts + 1`, donne l'accès | Enzo | `feat/service` |
+| 5 | [`common/`](common/README.md) | Code commun (déjà écrit) : le relire, le comprendre, maintenir les tests, gérer `init_keys.py`, coordonner l'intégration |  groupe | `feat/common` |
 
 Chaque dossier contient un `README.md` qui explique exactement quoi faire. Commence par lire le tien.
 
