@@ -11,27 +11,56 @@ voulu ("mail"). Le TGS :
   - renvoie enc_part = E(K_c_tgs, "TGS_REP", {"k_c_service", "exp"})
     et ticket = E(K_service, "TICKET", {"client", "k_c_service", "exp"}).
 
+Replay cache : replay_cache garde les authenticators déjà acceptés, avec pour
+clé (client, ts) et pour valeur l'heure à laquelle on pourra l'oublier. Chaque
+connexion est traitée dans son propre thread : le cache se manipule toujours
+en tenant cache_lock.
+
 Lancement, depuis la racine du dépôt :
     python -m tgs_server.tgs_server
 
-Les étapes TODO sont numérotées comme dans tgs_server/README.md.
+Les étapes TODO restantes sont numérotées comme dans tgs_server/README.md.
 """
 
 import threading
-import time  # noqa: F401  (utile pour les étapes 4 à 8)
+import time
 
 from common import config
-from common.crypto import DecryptError, decrypt, encrypt, new_session_key  # noqa: F401
+from common.crypto import DecryptError, decrypt, encrypt, new_session_key
 from common.net import error, serve
 
 NAME = "TGS"
 
-# Replay cache : authenticators déjà acceptés.
-# Clé : (client, ts) ; valeur : l'heure à laquelle on pourra l'oublier.
-# Le serveur traite chaque connexion dans un thread : toujours manipuler
-# le cache en tenant le verrou (with cache_lock: ...).
 replay_cache: dict[tuple[str, float], float] = {}
 cache_lock = threading.Lock()
+
+
+def est_nombre(valeur) -> bool:
+    """Indique si valeur est un nombre utilisable comme timestamp Unix.
+
+    Un booléen est refusé, même si Python considère True et False comme des
+    entiers : un champ "exp" ou "ts" à True ne doit pas passer pour une date.
+    """
+    return isinstance(valeur, (int, float)) and not isinstance(valeur, bool)
+
+
+def lire_cle(part: dict, nom: str) -> bytes | None:
+    """Récupère une clé de session transportée en hexadécimal dans un dictionnaire.
+
+    Renvoie la clé en octets si le champ existe, est de l'hexadécimal valide et
+    fait 16 octets (AES-128), sinon None. Un champ absent ou abîmé veut dire que
+    le chiffré a été fabriqué par quelqu'un d'autre que l'AS.
+    """
+    valeur = part.get(nom)
+    if not isinstance(valeur, str):
+        return None
+    try:
+        cle = bytes.fromhex(valeur)
+    except ValueError:
+        return None
+    if len(cle) != 16:
+        return None
+    return cle
 
 
 def handle_request(msg: dict, keys: dict[str, bytes]) -> dict:
@@ -39,31 +68,50 @@ def handle_request(msg: dict, keys: dict[str, bytes]) -> dict:
 
     msg  : {"type": "TGS_REQ", "tgt": "...", "service": "mail", "auth": "..."}
     keys : clés long terme (keys["krbtgt"] = K_tgs, keys["mail"] = K_service)
+
+    Les contrôles sont faits dans l'ordre du README et la fonction s'arrête au
+    premier qui échoue. Toutes les vérifications de temps utilisent l'heure du
+    serveur, jamais une heure envoyée en clair par le client.
     """
-    # TODO 1 : vérifier msg["type"] == "TGS_REQ" et la présence de "tgt", "auth", "service"
-    #          sinon -> return error("requête invalide")
+    if (
+        msg.get("type") != "TGS_REQ"
+        or not isinstance(msg.get("tgt"), str)
+        or not isinstance(msg.get("auth"), str)
+        or not isinstance(msg.get("service"), str)
+    ):
+        return error("requête invalide")
 
-    # TODO 2 : vérifier que le service demandé existe :
-    #          service dans config.SERVICES et dans keys
-    #          sinon -> return error("service inconnu")
+    service = msg["service"]
+    if service not in config.SERVICES or service not in keys:
+        return error("service inconnu")
 
-    # TODO 3 : ouvrir le TGT
-    #          tgt = decrypt(keys[config.TGS_PRINCIPAL], msg["tgt"], "TGT")
-    #          DecryptError -> return error("TGT invalide")
-    #          k_c_tgs = bytes.fromhex(tgt["k_c_tgs"])
+    try:
+        tgt = decrypt(keys[config.TGS_PRINCIPAL], msg["tgt"], "TGT")
+    except DecryptError:
+        return error("TGT invalide")
 
-    # TODO 4 : vérifier que le TGT n'a pas expiré : time.time() < tgt["exp"]
-    #          sinon -> return error("TGT expiré")
+    client = tgt.get("client")
+    k_c_tgs = lire_cle(tgt, "k_c_tgs")
+    if not isinstance(client, str) or k_c_tgs is None or not est_nombre(tgt.get("exp")):
+        return error("TGT invalide")
 
-    # TODO 5 : ouvrir l'authenticator
-    #          auth = decrypt(k_c_tgs, msg["auth"], "TGS_AUTH")
-    #          DecryptError -> return error("authenticator invalide")
+    maintenant = time.time()
+    if maintenant >= tgt["exp"]:
+        return error("TGT expiré")
 
-    # TODO 6 : vérifier que auth["client"] == tgt["client"]
-    #          sinon -> return error("client de l'authenticator différent de celui du TGT")
+    try:
+        auth = decrypt(k_c_tgs, msg["auth"], "TGS_AUTH")
+    except DecryptError:
+        return error("authenticator invalide")
 
-    # TODO 7 : vérifier que abs(time.time() - auth["ts"]) <= config.CLOCK_SKEW
-    #          sinon -> return error("timestamp hors de la fenêtre autorisée")
+    if not est_nombre(auth.get("ts")):
+        return error("authenticator invalide")
+
+    if auth.get("client") != client:
+        return error("client de l'authenticator différent de celui du TGT")
+
+    if abs(maintenant - auth["ts"]) > config.CLOCK_SKEW:
+        return error("timestamp hors de la fenêtre autorisée")
 
     # TODO 8 : replay cache (sous cache_lock) :
     #          - supprimer les entrées dont l'heure d'oubli est passée ;
@@ -84,6 +132,7 @@ def handle_request(msg: dict, keys: dict[str, bytes]) -> dict:
 
 
 def main() -> None:
+    """Charge les clés long terme et lance le serveur TGS sur son port."""
     keys = config.load_keys()
     serve(config.HOST, config.TGS_PORT, lambda msg: handle_request(msg, keys), NAME)
 
