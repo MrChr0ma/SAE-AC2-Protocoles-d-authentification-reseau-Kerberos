@@ -17,62 +17,68 @@ Les étapes TODO sont numérotées comme dans service/README.md.
 """
 
 import threading
-import time  # noqa: F401  (utile pour les étapes 3 à 7)
+import time
 
 from common import config
-from common.crypto import DecryptError, decrypt, encrypt  # noqa: F401
-from common.net import error, serve
+from common.crypto import DecryptError, decrypt, encrypt
+from common.net import error, serv
 
-NAME = "SERVICE"
-SERVICE_NAME = config.DEFAULT_SERVICE  # "mail" : son entrée dans keys.json contient K_service
-
-# Replay cache : authenticators déjà acceptés.
-# Clé : (client, ts) ; valeur : l'heure à laquelle on pourra l'oublier.
-# Toujours le manipuler en tenant le verrou (with cache_lock: ...).
-replay_cache: dict[tuple[str, float], float] = {}
+replay_cache = {}
 cache_lock = threading.Lock()
+K_SERVICE = bytes.fromhex(config.K_SERVICE)
 
 
-def handle_request(msg: dict, k_service: bytes) -> dict:
-    """Traite un AP_REQ et renvoie un AP_REP ou un ERROR.
+def handle_ap_req(msg):
 
-    msg       : {"type": "AP_REQ", "ticket": "...", "auth": "..."}
-    k_service : la clé long terme du service (keys["mail"])
-    """
-    # TODO 1 : vérifier msg["type"] == "AP_REQ" et la présence de "ticket" et "auth"
-    #          sinon -> return error("requête invalide")
+    if (not isinstance(msg, dict)
+            or msg.get("type") != "AP_REQ"
+            or "ticket" not in msg
+            or "auth" not in msg):
+        return error("requête invalide")
 
-    # TODO 2 : ouvrir le ticket
-    #          ticket = decrypt(k_service, msg["ticket"], "TICKET")
-    #          DecryptError -> return error("ticket invalide")
-    #          k_c_service = bytes.fromhex(ticket["k_c_service"])
+    try:
+        try:
+            ticket = decrypt(K_SERVICE, msg["ticket"], "TICKET")
+        except DecryptError:
+            return error("ticket invalide")
+        k_c_service = bytes.fromhex(ticket["k_c_service"])
 
-    # TODO 3 : vérifier que le ticket n'a pas expiré : time.time() < ticket["exp"]
-    #          sinon -> return error("ticket expiré")
+        if not time.time() < ticket["exp"]:
+            return error("ticket expiré")
 
-    # TODO 4 : ouvrir l'authenticator
-    #          auth = decrypt(k_c_service, msg["auth"], "AP_AUTH")
-    #          DecryptError -> return error("authenticator invalide")
+        try:
+            auth = decrypt(k_c_service, msg["auth"], "AP_AUTH")
+        except DecryptError:
+            return error("authenticator invalide")
 
-    # TODO 5 : vérifier que auth["client"] == ticket["client"]
-    #          sinon -> return error("client de l'authenticator différent de celui du ticket")
 
-    # TODO 6 : vérifier que abs(time.time() - auth["ts"]) <= config.CLOCK_SKEW
-    #          sinon -> return error("timestamp hors de la fenêtre autorisée")
+        if auth["client"] != ticket["client"]:
+            return error("client de l'authenticator différent de celui du ticket")
 
-    # TODO 7 : replay cache (sous cache_lock) :
-    #          - supprimer les entrées dont l'heure d'oubli est passée ;
-    #          - si (client, ts) est déjà présent -> return error("authenticator déjà utilisé (rejeu)")
-    #          - sinon l'ajouter avec l'heure d'oubli auth["ts"] + config.CLOCK_SKEW
 
-    # TODO 8 : construire la preuve pour le client
-    #          enc_part = encrypt(k_c_service, {"ts": auth["ts"] + 1}, "AP_REP")
+        now = time.time()
+        if abs(now - auth["ts"]) > config.CLOCK_SKEW:
+            return error("timestamp hors de la fenêtre autorisée")
 
-    # TODO 9 : afficher « accès accordé à <client> » dans le log
-    #          et renvoyer {"type": "AP_REP", "enc_part": enc_part}
 
-    return error("non implémenté")
+        cle = (auth["client"], auth["ts"])
+        with cache_lock:
+            for c in [c for c, oubli in replay_cache.items() if oubli <= now]:
+                del replay_cache[c]
 
+            if cle in replay_cache:
+                return error("authenticator déjà utilisé (rejeu)")
+
+            replay_cache[cle] = auth["ts"] + config.CLOCK_SKEW
+
+
+        enc_part = encrypt(k_c_service, {"ts": auth["ts"] + 1}, "AP_REP")
+
+    except (KeyError, TypeError, ValueError):
+        return error("requête invalide")
+
+    print(f"accès accordé à {ticket['client']}")
+    return {"type": "AP_REP", "enc_part": enc_part}
 
 def main() -> None:
     k_service = config.load_keys()[SERVICE_NAME]
