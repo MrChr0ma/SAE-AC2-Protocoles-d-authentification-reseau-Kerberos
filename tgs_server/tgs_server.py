@@ -1,33 +1,10 @@
-"""Partie 3 : TGS (Ticket Granting Server), deuxième échange du protocole.
-
-Rôle : le client présente son TGT, un authenticator et le nom du service
-voulu ("mail"). Le TGS :
-  - ouvre le TGT avec K_tgs (lui seul, avec l'AS, connaît cette clé) et y
-    trouve le nom du client et K_c_tgs ;
-  - ouvre l'authenticator avec K_c_tgs : seul le vrai client a pu le
-    fabriquer, puisque K_c_tgs n'a été envoyée qu'à lui (chiffrée avec K_client) ;
-  - vérifie : même client, timestamp récent, TGT non expiré, authenticator
-    jamais vu (replay cache) ;
-  - renvoie enc_part = E(K_c_tgs, "TGS_REP", {"k_c_service", "exp"})
-    et ticket = E(K_service, "TICKET", {"client", "k_c_service", "exp"}).
-
-Replay cache : replay_cache garde les authenticators déjà acceptés, avec pour
-clé (client, ts) et pour valeur l'heure à laquelle on pourra l'oublier. Chaque
-connexion est traitée dans son propre thread : le cache se manipule toujours
-en tenant cache_lock.
-
-Lancement, depuis la racine du dépôt :
-    python -m tgs_server.tgs_server
-
-Les étapes TODO restantes sont numérotées comme dans tgs_server/README.md.
-"""
-
+import math
 import threading
 import time
 
 from common import config
 from common.crypto import DecryptError, decrypt, encrypt, new_session_key
-from common.net import error, serve
+from common.net import error, log, serve
 
 NAME = "TGS"
 
@@ -36,21 +13,17 @@ cache_lock = threading.Lock()
 
 
 def est_nombre(valeur) -> bool:
-    """Indique si valeur est un nombre utilisable comme timestamp Unix.
-
-    Un booléen est refusé, même si Python considère True et False comme des
-    entiers : un champ "exp" ou "ts" à True ne doit pas passer pour une date.
-    """
-    return isinstance(valeur, (int, float)) and not isinstance(valeur, bool)
+    """Vrai si valeur est un nombre fini utilisable comme date (booléen, NaN et infini refusés)."""
+    if not isinstance(valeur, (int, float)) or isinstance(valeur, bool):
+        return False
+    try:
+        return math.isfinite(float(valeur))
+    except OverflowError:
+        return False
 
 
 def lire_cle(part: dict, nom: str) -> bytes | None:
-    """Récupère une clé de session transportée en hexadécimal dans un dictionnaire.
-
-    Renvoie la clé en octets si le champ existe, est de l'hexadécimal valide et
-    fait 16 octets (AES-128), sinon None. Un champ absent ou abîmé veut dire que
-    le chiffré a été fabriqué par quelqu'un d'autre que l'AS.
-    """
+    """Lit une clé de session de 16 octets écrite en hexadécimal, ou renvoie None."""
     valeur = part.get(nom)
     if not isinstance(valeur, str):
         return None
@@ -63,16 +36,24 @@ def lire_cle(part: dict, nom: str) -> bytes | None:
     return cle
 
 
-def handle_request(msg: dict, keys: dict[str, bytes]) -> dict:
-    """Traite un TGS_REQ et renvoie un TGS_REP ou un ERROR.
+def deja_vu(client: str, ts: float, maintenant: float) -> bool:
+    """Enregistre l'authenticator (client, ts) et renvoie True s'il avait déjà été reçu.
 
-    msg  : {"type": "TGS_REQ", "tgt": "...", "service": "mail", "auth": "..."}
-    keys : clés long terme (keys["krbtgt"] = K_tgs, keys["mail"] = K_service)
-
-    Les contrôles sont faits dans l'ordre du README et la fonction s'arrête au
-    premier qui échoue. Toutes les vérifications de temps utilisent l'heure du
-    serveur, jamais une heure envoyée en clair par le client.
+    Une entrée est gardée deux fois la fenêtre CLOCK_SKEW : passé ce délai, le
+    contrôle du timestamp suffit à refuser un rejeu, même si deux requêtes se croisent.
     """
+    with cache_lock:
+        for cle, oubli in list(replay_cache.items()):
+            if oubli < maintenant:
+                del replay_cache[cle]
+        if (client, ts) in replay_cache:
+            return True
+        replay_cache[(client, ts)] = ts + 2 * config.CLOCK_SKEW
+        return False
+
+
+def handle_request(msg: dict, keys: dict[str, bytes]) -> dict:
+    """Vérifie un TGS_REQ et renvoie un TGS_REP, ou un ERROR au premier contrôle qui échoue."""
     if (
         msg.get("type") != "TGS_REQ"
         or not isinstance(msg.get("tgt"), str)
@@ -113,26 +94,24 @@ def handle_request(msg: dict, keys: dict[str, bytes]) -> dict:
     if abs(maintenant - auth["ts"]) > config.CLOCK_SKEW:
         return error("timestamp hors de la fenêtre autorisée")
 
-    # TODO 8 : replay cache (sous cache_lock) :
-    #          - supprimer les entrées dont l'heure d'oubli est passée ;
-    #          - si (client, ts) est déjà présent -> return error("authenticator déjà utilisé (rejeu)")
-    #          - sinon l'ajouter avec l'heure d'oubli auth["ts"] + config.CLOCK_SKEW
+    if deja_vu(client, auth["ts"], maintenant):
+        return error("authenticator déjà utilisé (rejeu)")
 
-    # TODO 9 : générer k_c_service = new_session_key()
-    #          et exp = min(time.time() + config.TICKET_LIFETIME, tgt["exp"])
+    k_c_service = new_session_key().hex()
+    exp = min(maintenant + config.TICKET_LIFETIME, tgt["exp"])
+    enc_part = encrypt(k_c_tgs, {"k_c_service": k_c_service, "exp": exp}, "TGS_REP")
+    ticket = encrypt(
+        keys[service],
+        {"client": client, "k_c_service": k_c_service, "exp": exp},
+        "TICKET",
+    )
 
-    # TODO 10 : construire
-    #          enc_part = encrypt(k_c_tgs, {"k_c_service": ..., "exp": exp}, "TGS_REP")
-    #          ticket   = encrypt(keys[service], {"client": ..., "k_c_service": ..., "exp": exp}, "TICKET")
-
-    # TODO 11 : renvoyer {"type": "TGS_REP", "enc_part": enc_part, "ticket": ticket}
-    #           et afficher une ligne de log pour la démo
-
-    return error("non implémenté")
+    log(NAME, f"ticket délivré à {client} pour {service}")
+    return {"type": "TGS_REP", "enc_part": enc_part, "ticket": ticket}
 
 
 def main() -> None:
-    """Charge les clés long terme et lance le serveur TGS sur son port."""
+    """Charge les clés long terme et lance le TGS sur son port."""
     keys = config.load_keys()
     serve(config.HOST, config.TGS_PORT, lambda msg: handle_request(msg, keys), NAME)
 

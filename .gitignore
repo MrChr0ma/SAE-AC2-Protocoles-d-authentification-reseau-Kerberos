@@ -11,10 +11,6 @@ venv/
 # Clés secrètes générées par scripts/init_keys.py : ne jamais les committer
 keys.json
 
-# Fichiers d'outils locaux
-.claude/
-CLAUDE.md
-
 # Éditeurs / OS
 .vscode/
 .idea/

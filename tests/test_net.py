@@ -1,5 +1,3 @@
-"""Tests de common/net.py."""
-
 import socket
 import struct
 import threading

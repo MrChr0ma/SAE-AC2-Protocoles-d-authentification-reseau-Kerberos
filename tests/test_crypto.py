@@ -1,5 +1,3 @@
-"""Tests de common/crypto.py."""
-
 import pytest
 
 from common import config, crypto
@@ -28,7 +26,7 @@ def test_mauvais_aad():
         decrypt(key, blob, "TICKET")
 
 
-@pytest.mark.parametrize("position", [0, 12, -1])  # dans le nonce, le chiffré, le tag
+@pytest.mark.parametrize("position", [0, 12, -1])
 def test_chiffre_modifie(position):
     key = new_session_key("aes128")
     raw = bytearray(bytes.fromhex(encrypt(key, DATA, "TGT")))
