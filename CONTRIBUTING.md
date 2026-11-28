@@ -56,6 +56,7 @@ Après chaque fusion dans `main`, tout le monde fait `git pull origin main` sur 
 
 ## Style
 
-- Python 3.10+, code et commentaires en français.
+- Python 3.10+, code en français.
+- Commentaires : uniquement une docstring `""" """` par fonction. Pas de commentaires `#` dans le code ; les `# TODO` des squelettes disparaissent quand la partie est codée.
 - Toujours chiffrer avec `common.crypto.encrypt` : jamais d'appel direct à `AESGCM` (risque de réutiliser un nonce).
 - Toujours utiliser l'heure du serveur (`time.time()`) pour vérifier une expiration ou un timestamp.

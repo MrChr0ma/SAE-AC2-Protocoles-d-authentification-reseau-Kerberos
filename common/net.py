@@ -1,17 +1,3 @@
-"""Envoi et réception des messages JSON sur une socket TCP.
-
-Format sur le fil : 4 octets (longueur du JSON, big-endian) puis le JSON en UTF-8.
-TCP est un flux d'octets : sans ce préfixe, le destinataire ne saurait pas
-où s'arrête un message.
-
-Ce module fournit aussi :
-  - error(reason)                  : construit un message ERROR ;
-  - send_request(host, port, msg)  : côté client, une requête -> une réponse ;
-  - serve(host, port, handler)     : côté serveur, la boucle accept + un thread
-                                     par connexion. Chaque serveur n'a plus qu'à
-                                     écrire handler(msg: dict) -> dict.
-"""
-
 import json
 import socket
 import struct
@@ -20,9 +6,9 @@ import time
 import traceback
 from typing import Callable
 
-MAX_MSG_SIZE = 1024 * 1024  # 1 Mo
-CONN_TIMEOUT = 10.0  # secondes d'inactivité avant d'abandonner une connexion
-HEADER = struct.Struct(">I")  # entier non signé 32 bits, big-endian
+MAX_MSG_SIZE = 1024 * 1024
+CONN_TIMEOUT = 10.0
+HEADER = struct.Struct(">I")
 
 
 class ProtocolError(Exception):
@@ -64,10 +50,7 @@ def recv_exact(sock: socket.socket, n: int) -> bytes:
 
 
 def recv_msg(sock: socket.socket) -> dict:
-    """Reçoit un message complet et le renvoie sous forme de dictionnaire.
-
-    Lève ConnectionClosed, MessageTooLarge ou ProtocolError.
-    """
+    """Reçoit un message complet ; lève ConnectionClosed, MessageTooLarge ou ProtocolError."""
     (length,) = HEADER.unpack(recv_exact(sock, HEADER.size))
     if length > MAX_MSG_SIZE:
         raise MessageTooLarge(f"message annoncé de {length} octets (max {MAX_MSG_SIZE})")
@@ -97,6 +80,7 @@ def log(name: str, text: str) -> None:
 
 
 def _handle_connection(conn: socket.socket, addr, handler: Handler, name: str) -> None:
+    """Traite une connexion : lit la requête, appelle le handler, renvoie sa réponse."""
     conn.settimeout(CONN_TIMEOUT)
     with conn:
         try:
@@ -115,7 +99,7 @@ def _handle_connection(conn: socket.socket, addr, handler: Handler, name: str) -
         log(name, f"{addr[0]}:{addr[1]} -> {request.get('type')}")
         try:
             response = handler(request)
-        except Exception:  # un bug dans le handler ne doit pas tuer le serveur
+        except Exception:
             traceback.print_exc()
             response = error("erreur interne du serveur")
         if not isinstance(response, dict):
@@ -129,14 +113,10 @@ def _handle_connection(conn: socket.socket, addr, handler: Handler, name: str) -
 
 
 def serve_socket(server: socket.socket, handler: Handler, name: str = "serveur") -> None:
-    """Boucle d'acceptation sur une socket déjà en écoute.
+    """Accepte les connexions sur une socket déjà ouverte, un thread par connexion.
 
-    Chaque connexion est traitée dans son propre thread : un message reçu,
-    handler(message) appelé, la réponse renvoyée, la connexion fermée.
-    S'arrête quand la socket d'écoute est fermée.
+    accept() attend au plus une seconde pour que Ctrl+C soit pris en compte sous Windows.
     """
-    # Timeout d'une seconde sur accept() : permet à Ctrl+C d'être pris en
-    # compte rapidement, y compris sous Windows.
     server.settimeout(1.0)
     while True:
         try:
@@ -144,7 +124,7 @@ def serve_socket(server: socket.socket, handler: Handler, name: str = "serveur")
         except socket.timeout:
             continue
         except OSError:
-            break  # socket d'écoute fermée
+            break
         threading.Thread(
             target=_handle_connection, args=(conn, addr, handler, name), daemon=True
         ).start()

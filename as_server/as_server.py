@@ -4,6 +4,7 @@ from common.crypto import encrypt, new_session_key
 from common.net import error, serve
 
 def handle_request(msg: dict, keys: dict) -> dict:
+    """Vérifie un AS_REQ et renvoie le TGT et la clé de session, ou un ERROR."""
     if not isinstance(msg, dict) or msg.get("type") != "AS_REQ" or "client" not in msg:
         return error("requête invalide")
     client = msg["client"]
@@ -22,6 +23,7 @@ def handle_request(msg: dict, keys: dict) -> dict:
     return {"type": "AS_REP","enc_part": enc_part,"tgt": tgt,}
 
 def main() -> None:
+    """Charge les clés long terme et lance l'AS sur son port."""
     keys = config.load_keys()
     serve(config.HOST, config.AS_PORT, lambda msg: handle_request(msg, keys), "AS")
 
