@@ -1,58 +1,43 @@
 # Règles de travail
 
-## Une branche par partie
+## Branches et pull requests
 
-| Partie | Branche |
-| --- | --- |
-| 1. Client | `feat/client` |
-| 2. AS | `feat/as-server` |
-| 3. TGS | `feat/tgs-server` |
-| 4. Service | `feat/service` |
-| 5. Code commun | `feat/common` |
-
-On ne pousse jamais directement sur `main` : tout passe par une pull request.
-
-## Workflow
+- On ne pousse pas directement sur `main` : tout passe par une pull request.
+- Une branche par sujet, de préférence `feat/<partie>` (`feat/tgs-server`, `feat/service`...). Une branche créée depuis l'interface de GitHub marche aussi.
+- Une autre personne du groupe relit la PR avant la fusion. Elle vérifie surtout le contrat des messages ([docs/PROTOCOLE.md](docs/PROTOCOLE.md#contrat-des-messages)).
+- Après chaque fusion, chacun récupère `main` sur sa branche (`git pull origin main`).
 
 ```bash
 git fetch origin
-git switch feat/as-server            # ta branche
+git switch feat/service              # ta branche
 git pull origin main                 # récupérer ce qui a été fusionné entre-temps
 # ... coder, puis :
 pytest
-git add as_server/ tests/test_as_server.py
-git commit -m "as_server: génère le TGT"
+git status                           # keys.json ne doit pas apparaître
+git add service/ tests/test_service.py
+git commit -m "service: vérifie l'authenticator"
 git push
 ```
 
-Puis ouvrir une PR de ta branche vers `main` sur GitHub. La personne 5 (code commun) relit en priorité le respect du contrat des messages ; au moins une autre personne relit aussi.
+Puis ouvrir la PR vers `main` sur GitHub.
 
-- Commits petits, avec un message clair qui commence par le nom de la partie (`client: ...`, `tgs_server: ...`).
-- Ne touche qu'à ton dossier et à tes tests dans `tests/`.
-- Avant chaque `git add`, vérifie avec `git status` que `keys.json` n'apparaît pas.
+- Commits petits, avec un message qui commence par le nom de la partie (`client: ...`, `tgs_server: ...`).
+- Une PR touche surtout ton dossier et tes tests. Si elle modifie aussi `common/` ou un autre dossier, dis-le dans la description de la PR.
 
 ## Ce qu'on ne modifie pas sans prévenir le groupe
 
-- **`common/`** (crypto, réseau, configuration) : il est utilisé par tout le monde. Une modification se discute d'abord avec la personne 5, puis passe par `feat/common` et une PR à part.
-- **Le format des messages** ([docs/PROTOCOLE.md](docs/PROTOCOLE.md#contrat-des-messages)) : noms des champs, valeurs d'`aad`, ce qui est chiffré avec quelle clé. Si l'AS change le contenu du TGT, le TGS ne peut plus l'ouvrir.
+- `common/` (crypto, réseau, configuration) : tout le monde l'utilise.
+- Le format des messages : noms des champs, valeurs d'`aad`, quelle clé chiffre quoi. Si l'AS change le contenu du TGT, le TGS ne peut plus l'ouvrir.
 
-Si tu as besoin d'un changement, préviens le groupe, mets à jour la doc en même temps que le code.
+Si un changement est nécessaire, préviens le groupe et mets à jour la doc dans la même PR.
 
 ## Avant chaque PR
 
-- [ ] `pytest` passe (y compris les tests des autres) ;
+- [ ] `pytest` passe, y compris les tests des autres ;
 - [ ] ton programme se lance avec `python -m <dossier>.<fichier>` depuis la racine ;
-- [ ] la checklist de ton README est à jour (cases cochées) ;
+- [ ] la checklist de ton README est à jour ;
 - [ ] `keys.json` n'est pas dans le commit ;
-- [ ] tu as noté dans [docs/JOURNAL.md](docs/JOURNAL.md) ce que tu as fait et les difficultés rencontrées (utile pour le rapport).
-
-## Ordre d'intégration
-
-1. **Client (échange 1) + AS** : le client obtient un TGT et l'affiche.
-2. **TGS** : le client obtient un ticket de service.
-3. **Service** : authentification mutuelle complète.
-
-Après chaque fusion dans `main`, tout le monde fait `git pull origin main` sur sa branche.
+- [ ] une ligne dans [docs/JOURNAL.md](docs/JOURNAL.md) dit ce que tu as fait.
 
 ## Style
 
